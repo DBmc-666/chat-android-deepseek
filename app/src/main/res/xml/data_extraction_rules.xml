@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  API Key 与会话内容不进任何系统备份：
+  SharedPreferences 里存着明文 API Key，files/sessions 下是完整对话记录。
+  上传到云端备份等于把「只存本机」这个承诺作废。
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="sharedpref" path="dschat_settings.xml" />
+        <exclude domain="file" path="sessions" />
+        <exclude domain="file" path="sessions_index.json" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="sharedpref" path="dschat_settings.xml" />
+        <exclude domain="file" path="sessions" />
+        <exclude domain="file" path="sessions_index.json" />
+    </device-transfer>
+</data-extraction-rules>

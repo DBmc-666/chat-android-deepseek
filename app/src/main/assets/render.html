@@ -1,0 +1,64 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<link rel="stylesheet" href="katex/katex.min.css">
+<style>
+  html, body { margin:0; padding:0; background:transparent; overflow:hidden; -webkit-text-size-adjust:100%; }
+  #root { font-size:15px; line-height:1.6; color:#F9FAFB; padding:2px 0; }
+  body.light #root { color:#1A1A1A; }
+  .katex-display { margin: 2px 0; }
+  .katex { font-size: 1.05em; }
+  .mermaid { text-align:center; }
+  svg { max-width:100%; height:auto; }
+</style>
+<script src="katex/katex.min.js"></script>
+<script src="mermaid.min.js"></script>
+</head>
+<body>
+<div id="root"></div>
+<script>
+function postHeight() {
+  try {
+    var h = Math.ceil(document.getElementById('root').getBoundingClientRect().height);
+    if (window.NativeBridge && window.NativeBridge.onHeight) window.NativeBridge.onHeight(h);
+  } catch (e) {}
+}
+
+function render(kind, payload, dark) {
+  document.body.className = dark ? '' : 'light';
+  var root = document.getElementById('root');
+  if (kind === 'math') {
+    try {
+      katex.render(payload, root, { displayMode: true, throwOnError: false, output: 'html' });
+    } catch (e) {
+      root.textContent = payload;
+    }
+    postHeight();
+    setTimeout(postHeight, 200);
+    return;
+  }
+  root.innerHTML = '';
+  var div = document.createElement('div');
+  div.className = 'mermaid';
+  div.textContent = payload;
+  root.appendChild(div);
+  try {
+    mermaid.initialize({ startOnLoad: false, theme: dark ? 'dark' : 'default', securityLevel: 'strict' });
+    mermaid.run({ nodes: [div] }).then(postHeight).catch(function () {
+      root.textContent = payload;
+      postHeight();
+    });
+  } catch (e) {
+    root.textContent = payload;
+    postHeight();
+  }
+  setTimeout(postHeight, 400);
+  setTimeout(postHeight, 1000);
+}
+
+window.addEventListener('load', postHeight);
+</script>
+</body>
+</html>
