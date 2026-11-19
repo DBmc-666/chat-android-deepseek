@@ -84,7 +84,6 @@ keyPassword=your_key_password
 > - 上架应用商店必须使用自己的正式签名
 
 ### 界面快照测试
-
 项目用 Robolectric + Roborazzi 在 JVM 上渲染界面快照，不需要模拟器：
 
 ```bash
@@ -92,6 +91,70 @@ keyPassword=your_key_password
 ```
 
 截图输出到 `app/build/screenshots/`，覆盖首页、对话、思考展开、搜索结果、设置、侧栏、字体大小等 20 余个场景。
+
+## 发布流程
+
+### 第一步：先和远端对比，不要凭记忆
+
+每次提交前先跑这一组，看清远端到底处在什么状态：
+
+```bash
+git fetch origin --tags --prune
+git status -sb                  # 本地是否落后或领先
+git log origin/main..HEAD       # 还没推上去的提交
+git log HEAD..origin/main       # 远端有、本地没有的提交
+git status --porcelain          # 工作区未提交的改动
+git tag -l                      # 本地 tag
+git ls-remote --tags origin     # 远端 tag
+ls dist/                        # 是否残留旧版本包
+```
+
+确认这四件事之后再动手：
+
+1. **远端有没有别人推的提交**需要先合并
+2. **版本号要和远端 tag 衔接**——用 `git tag -l` 的结果决定下一个号，不要凭印象跳号或回退
+3. **CHANGELOG 的条目要从提交里取**，不要凭回忆写：
+
+   ```bash
+   git log v0.10.2..HEAD --oneline
+   ```
+
+   逐条对照，已经发布过的内容不要重复写进新版本
+4. **`dist/` 里只保留当前版本的包**，临时测试包（`-memo`、`-mixed` 之类）发版前清掉
+
+> `git fetch` 失败时不要继续判断对比结果——此时 `origin/main` 是上次的缓存，
+> 显示"一致"并不代表真的同步。重试到成功为止。
+
+### 第二步：改版本号并核对
+
+`app/build.gradle.kts` 里的 `versionCode` 要递增，`versionName` 与即将打的 tag 一致：
+
+```bash
+./gradlew testDebugUnitTest                    # 测试必须全绿
+./gradlew assembleDebug assembleRelease
+aapt2 dump badging dist/Chat-X.Y.Z-release.apk | head -1   # 核对版本号写进去了
+```
+
+### 第三步：提交、打 tag、推送
+
+```bash
+git add -A
+git commit -m "feat: vX.Y.Z ..."
+git tag -a vX.Y.Z -m "vX.Y.Z"
+git push origin main
+git push origin vX.Y.Z        # tag 不会跟着 main 自动推
+```
+
+推送后核对远端确实收到了：
+
+```bash
+git ls-remote --heads origin
+git ls-remote --tags origin
+```
+
+### 第四步：GitHub Release
+
+在 Releases 页面选择刚推的 tag，上传 `dist/Chat-X.Y.Z-release.apk`，说明直接用 CHANGELOG 对应段落，并附上 SHA-256 与签名警示。
 
 ## 项目结构
 
