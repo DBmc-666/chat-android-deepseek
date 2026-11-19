@@ -901,40 +901,50 @@ private fun circled(n: Int): String =
 
 @Composable
 private fun TextBody(b: Block.Text, onOpenSearch: (List<SearchHit>) -> Unit, streaming: Boolean) {
-    val colors = Ds.colors
-    Column(Modifier.padding(bottom = 6.dp)) {
-        MarkdownView(b.text, streaming = streaming)
-        if (b.citations.isNotEmpty()) {
-            Spacer(Modifier.height(8.dp))
-            // 角标显示的是一处回答里引用了几个来源：1 个是 ①，3 个是 ③
-            Row(
-                Modifier
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(colors.brand.copy(alpha = 0.14f))
-                    .clickable {
-                        onOpenSearch(
-                            b.citations.map {
-                                SearchHit(
-                                    title = it.title.ifBlank { it.url },
-                                    url = it.url,
-                                    site = runCatching { java.net.URI(it.url).host }
-                                        .getOrNull().orEmpty(),
-                                    snippet = it.cited,
-                                    date = "",
-                                )
-                            }
-                        )
-                    }
-                    .padding(horizontal = 8.dp, vertical = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    circled(b.citations.size),
-                    fontSize = 12.sp,
-                    color = colors.brandText,
+    val openCitations: () -> Unit = {
+        onOpenSearch(
+            b.citations.map {
+                SearchHit(
+                    title = it.title.ifBlank { it.url },
+                    url = it.url,
+                    site = runCatching { java.net.URI(it.url).host }.getOrNull().orEmpty(),
+                    snippet = it.cited,
+                    date = "",
                 )
             }
-        }
+        )
+    }
+    Column(Modifier.padding(bottom = 6.dp)) {
+        MarkdownView(
+            b.text,
+            streaming = streaming,
+            trailing = if (b.citations.isNotEmpty()) {
+                { CitationBadge(b.citations.size, openCitations) }
+            } else {
+                null
+            },
+        )
+    }
+}
+
+/** 官方样式：灰底小圈，贴在正文最后一句的末尾 */
+@Composable
+private fun CitationBadge(count: Int, onClick: () -> Unit) {
+    val colors = Ds.colors
+    Box(
+        Modifier
+            .clip(RoundedCornerShape(4.dp))
+            .background(colors.layer3)
+            .clickable { onClick() }
+            .padding(horizontal = 2.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            circled(count),
+            fontSize = 9.sp,
+            lineHeight = 12.sp,
+            color = colors.labelSecondary,
+        )
     }
 }
 

@@ -100,7 +100,8 @@ class UiSnapshotTest {
                         "- **推理链路更长**：多步推理更稳，长任务不容易断\n" +
                         "- **代码补全更准**：上下文更长，跨文件补全可用\n" +
                         "- API 支持了新的工具调用参数，例如 `thinking` 与 `safety_check`\n\n" +
-                        "```kotlin\nval client = AnthropicClient()\nclient.stream(settings, history, question)\n```",
+                        "```kotlin\nval client = AnthropicClient()\nclient.stream(settings, history, question)\n```\n\n" +
+                        "以上就是本次更新的主要内容。",
                     mutableListOf(Citation("https://api-docs.deepseek.com/", "官方公告", "…")),
                 ),
             ),

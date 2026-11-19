@@ -21,6 +21,10 @@ sealed class Block {
         val title: String,
         val publishedAt: String,
         val signature: String,
+        /** 服务端原始 web_fetch_tool_result 块；非空时回传用它，避免自己拼出来的结构和服务端不一致 */
+        val rawResult: String = "",
+        /** 服务端原始 server_tool_use 块，必须和结果块成对回传 */
+        val rawToolUse: String = "",
     ) : Block()
 }
 
@@ -138,6 +142,8 @@ fun Block.toJson(): JSONObject = JSONObject().apply {
             put("title", b.title)
             put("publishedAt", b.publishedAt)
             put("signature", b.signature)
+            if (b.rawResult.isNotEmpty()) put("rawResult", b.rawResult)
+            if (b.rawToolUse.isNotEmpty()) put("rawToolUse", b.rawToolUse)
         }
     }
 }
@@ -166,6 +172,8 @@ fun blockFromJson(o: JSONObject): Block? = when (o.optString("type")) {
         title = o.optString("title"),
         publishedAt = o.optString("publishedAt"),
         signature = o.optString("signature"),
+        rawResult = o.optString("rawResult"),
+        rawToolUse = o.optString("rawToolUse"),
     )
     else -> null
 }

@@ -125,6 +125,8 @@ class AnthropicClient {
             if (settings.autoTitle) put("title", JSONObject().put("enabled", true))
         }.toString()
 
+        lastPayload = payload
+
         val requestBuilder = Request.Builder()
             .url("$base/anthropic/v1/messages")
             .addHeader("x-api-key", settings.apiKey)
@@ -166,6 +168,8 @@ class AnthropicClient {
                     }
 
                     val indexMap = HashMap<Int, Int>()   // 服务端块序号 -> blocks 下标
+                    // server_tool_use 块不展示，但要原样留着，和结果块成对回传
+                    val toolUseRaw = HashMap<String, String>()
                     var stopReason: String? = null
                     var remoteTitle: String? = null
                     var finished = false
@@ -220,20 +224,29 @@ class AnthropicClient {
                                             val inner = c?.optJSONObject("content")
                                             // 抓取失败时 content 是 error 对象，没有 url，不进上下文也不展示
                                             if (c?.optString("type") == "web_fetch_result") {
+                                                val tid = cb.optString("tool_use_id")
                                                 into.withBlocks { list ->
                                                     indexMap[idx] = list.size
                                                     list.add(
                                                         Block.Fetch(
-                                                            toolUseId = cb.optString("tool_use_id"),
+                                                            toolUseId = tid,
                                                             url = c.optString("url").orEmpty(),
                                                             title = inner?.optString("title").orEmpty(),
                                                             publishedAt = c.optString("published_at")
                                                                 .orNullString().orEmpty(),
                                                             signature = cb.optString("signature")
                                                                 .orNullString().orEmpty(),
+                                                            rawResult = cb.toString(),
+                                                            rawToolUse = toolUseRaw[tid].orEmpty(),
                                                         )
                                                     )
                                                 }
+                                            }
+                                        }
+                                        "server_tool_use" -> {
+                                            // 服务端调用工具的记录，UI 不展示，只保存原文
+                                            cb.optString("id").takeIf { it.isNotBlank() }?.let {
+                                                toolUseRaw[it] = cb.toString()
                                             }
                                         }
                                     }
@@ -345,6 +358,11 @@ class AnthropicClient {
     }
 
     companion object {
+        /** 最近一次实际发出的请求体，仅用于排查问题 */
+        @Volatile
+        var lastPayload: String = ""
+            private set
+
 
         private fun isUsable(a: Msg): Boolean =
             a.status in setOf("done", "stopped") &&
@@ -423,50 +441,64 @@ class AnthropicClient {
 
         /** 有 read_link 抓取块时，assistant content 必须用块数组并把 signature 原样带回。 */
         private fun assistantContent(a: Msg): Any {
-            val fetches = a.blocks.filterIsInstance<Block.Fetch>().filter { it.signature.isNotBlank() }
+            val fetches = a.blocks
+                .filterIsInstance<Block.Fetch>()
+                .filter { it.signature.isNotBlank() || it.rawResult.isNotBlank() }
             val text = a.plainText()
             if (fetches.isEmpty()) return text
             val arr = JSONArray()
             fetches.forEach { f ->
-                arr.put(
-                    JSONObject()
-                        .put("type", "server_tool_use")
-                        .put("id", f.toolUseId)
-                        .put("name", "deepseek_read_url")
-                        .put("input", JSONObject().put("action", "read_link").put("url", f.url))
-                        .put("caller", JSONObject().put("type", "direct"))
-                        .put("kind", "read_link")
-                )
-                arr.put(
-                    JSONObject()
-                        .put("type", "web_fetch_tool_result")
-                        .put("tool_use_id", f.toolUseId)
-                        .put(
-                            "content",
-                            JSONObject()
-                                .put("type", "web_fetch_result")
-                                .put("url", f.url)
-                                .put(
-                                    "content",
-                                    JSONObject()
-                                        .put("type", "document")
-                                        .put(
-                                            "source",
-                                            JSONObject()
-                                                .put("type", "text")
-                                                .put("media_type", "text/plain")
-                                                .put("data", "")
-                                        )
-                                        .put("title", f.title)
-                                )
-                                .put("published_at", f.publishedAt.ifBlank { null })
-                        )
-                        .put("kind", "read_link")
-                        .put("signature", f.signature)
-                )
+                arr.put(rawOrBuiltToolUse(f))
+                arr.put(rawOrBuiltResult(f))
             }
             if (text.isNotBlank()) arr.put(JSONObject().put("type", "text").put("text", text))
             return arr
+        }
+
+        /** 优先用服务端给的原始块，保证 id / input / caller 等字段完全一致 */
+        private fun rawOrBuiltToolUse(f: Block.Fetch): JSONObject {
+            if (f.rawToolUse.isNotBlank()) {
+                runCatching { JSONObject(f.rawToolUse) }.getOrNull()?.let { return it }
+            }
+            return JSONObject()
+                .put("type", "server_tool_use")
+                .put("id", f.toolUseId)
+                .put("name", "deepseek_read_url")
+                .put("input", JSONObject().put("action", "read_link").put("url", f.url))
+                .put("caller", JSONObject().put("type", "direct"))
+                .put("kind", "read_link")
+        }
+
+        /** 同理：原始结果块里的加密正文和 signature 都在，自己拼容易漏字段 */
+        private fun rawOrBuiltResult(f: Block.Fetch): JSONObject {
+            if (f.rawResult.isNotBlank()) {
+                runCatching { JSONObject(f.rawResult) }.getOrNull()?.let { return it }
+            }
+            return JSONObject()
+                .put("type", "web_fetch_tool_result")
+                .put("tool_use_id", f.toolUseId)
+                .put(
+                    "content",
+                    JSONObject()
+                        .put("type", "web_fetch_result")
+                        .put("url", f.url)
+                        .put(
+                            "content",
+                            JSONObject()
+                                .put("type", "document")
+                                .put(
+                                    "source",
+                                    JSONObject()
+                                        .put("type", "text")
+                                        .put("media_type", "text/plain")
+                                        .put("data", "")
+                                )
+                                .put("title", f.title)
+                        )
+                        .put("published_at", f.publishedAt.ifBlank { null })
+                )
+                .put("kind", "read_link")
+                .put("signature", f.signature)
         }
 
         /** 有附件时 content 用 block 数组，否则保持纯字符串。 */

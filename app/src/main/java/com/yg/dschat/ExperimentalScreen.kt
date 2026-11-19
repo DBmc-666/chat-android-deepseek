@@ -9,13 +9,17 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.DataUsage
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -44,8 +48,42 @@ import androidx.compose.ui.unit.sp
 fun ExperimentalScreen(vm: ChatViewModel, onBack: () -> Unit) {
     val colors = Ds.colors
     var sub by remember { mutableStateOf<String?>(null) }
+    var showLastRequest by remember { mutableStateOf(false) }
+    val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+    val ctx = androidx.compose.ui.platform.LocalContext.current
 
     androidx.activity.compose.BackHandler { onBack() }
+
+    if (showLastRequest) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { showLastRequest = false },
+            title = { Text("最近一次请求体") },
+            text = {
+                Column(
+                    Modifier
+                        .heightIn(max = 420.dp)
+                        .verticalScroll(rememberScrollState())
+                ) {
+                    Text(
+                        AnthropicClient.lastPayload.ifBlank { "还没有发送过请求" },
+                        fontSize = 10.sp,
+                        lineHeight = 14.sp,
+                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                        color = colors.labelSecondary,
+                    )
+                }
+            },
+            confirmButton = {
+                androidx.compose.material3.TextButton(onClick = {
+                    clipboard.setText(androidx.compose.ui.text.AnnotatedString(AnthropicClient.lastPayload))
+                    android.widget.Toast.makeText(ctx, "已复制", android.widget.Toast.LENGTH_SHORT).show()
+                }) { Text("复制") }
+            },
+            dismissButton = {
+                androidx.compose.material3.TextButton(onClick = { showLastRequest = false }) { Text("关闭") }
+            },
+        )
+    }
 
     if (sub == "usage") {
         TokenUsageScreen(vm) { sub = null }
@@ -138,6 +176,41 @@ fun ExperimentalScreen(vm: ChatViewModel, onBack: () -> Unit) {
                     Spacer(Modifier.width(16.dp))
                     Text("Token 用量", modifier = Modifier.weight(1f), fontSize = 15.sp, color = colors.labelPrimary)
                     Text("查看", fontSize = 14.sp, color = colors.labelTertiary)
+                    Spacer(Modifier.width(4.dp))
+                    Icon(
+                        Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                        null,
+                        tint = colors.labelTertiary,
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+                HorizontalDivider(color = colors.borderL1, modifier = Modifier.padding(start = 16.dp))
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(56.dp)
+                        .clickable { showLastRequest = true }
+                        .padding(horizontal = 16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        Icons.Default.BugReport,
+                        null,
+                        tint = colors.labelPrimary,
+                        modifier = Modifier.size(20.dp),
+                    )
+                    Spacer(Modifier.width(16.dp))
+                    Text(
+                        "最近一次请求体",
+                        modifier = Modifier.weight(1f),
+                        fontSize = 15.sp,
+                        color = colors.labelPrimary,
+                    )
+                    Text(
+                        if (AnthropicClient.lastPayload.isBlank()) "暂无" else "${AnthropicClient.lastPayload.length} 字符",
+                        fontSize = 14.sp,
+                        color = colors.labelTertiary,
+                    )
                     Spacer(Modifier.width(4.dp))
                     Icon(
                         Icons.AutoMirrored.Filled.KeyboardArrowRight,

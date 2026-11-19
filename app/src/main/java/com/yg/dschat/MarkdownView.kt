@@ -26,6 +26,7 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.foundation.text.appendInlineContent
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
@@ -202,13 +203,27 @@ fun inlineMarkdown(src: String, colors: DsColors): AnnotatedString = buildAnnota
 }
 
 @Composable
-fun MarkdownView(src: String, streaming: Boolean = false) {
+fun MarkdownView(
+    src: String,
+    streaming: Boolean = false,
+    /** 追加到最后一段末尾的行内内容（如引用角标）；最后一段不是段落时单独一行 */
+    trailing: (@Composable () -> Unit)? = null,
+) {
     val colors = Ds.colors
 
     if (!streaming) {
         val blocks = remember(src) { parseMarkdown(src, colors) }
+        // 贴到最后一个段落末尾；末尾是代码块/图表时也往上找，避免孤零零留在最底部
+        val lastParaIdx = blocks.indexOfLast { it is MdBlock.Para }
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            blocks.forEach { MdBlockItem(it) }
+            blocks.forEachIndexed { i, b ->
+                if (trailing != null && i == lastParaIdx && b is MdBlock.Para) {
+                    MdParaWithTrailing(b, trailing)
+                } else {
+                    MdBlockItem(b)
+                }
+            }
+            if (trailing != null && lastParaIdx < 0) trailing()
         }
         return
     }
@@ -228,7 +243,34 @@ fun MarkdownView(src: String, streaming: Boolean = false) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         stableBlocks.forEach { MdBlockItem(it) }
         tailBlocks.forEach { MdBlockItem(it) }
+        if (trailing != null) trailing()
     }
+}
+
+/** 段落 + 行内尾部内容（引用角标贴在最后一句后面的同一行） */
+@Composable
+private fun MdParaWithTrailing(p: MdBlock.Para, trailing: @Composable () -> Unit) {
+    val colors = Ds.colors
+    val annotated = buildAnnotatedString {
+        append(p.text)
+        append(" ")
+        appendInlineContent("trailing", "\u200B")
+    }
+    Text(
+        annotated,
+        inlineContent = mapOf(
+            "trailing" to androidx.compose.foundation.text.InlineTextContent(
+                androidx.compose.ui.text.Placeholder(
+                    width = 15.sp,
+                    height = 13.sp,
+                    placeholderVerticalAlign = androidx.compose.ui.text.PlaceholderVerticalAlign.TextCenter,
+                )
+            ) { trailing() }
+        ),
+        fontSize = Ds.fsMd,
+        lineHeight = Ds.lhMd,
+        color = colors.labelPrimary,
+    )
 }
 
 @Composable
