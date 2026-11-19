@@ -133,9 +133,10 @@ class AnthropicClient {
                 JSONObject().put("type", if (settings.deepThinking) "enabled" else "disabled"),
             )
             val tools = JSONArray()
-            // 客户端工具模式（含互斥模式）：完全不用服务端联网工具（官方限制不能混用），联网也换成客户端实现
-            val clientMode = memoEnabled && settings.memoActive &&
-                (settings.memoToolMode == "client" || settings.memoToolMode == "exclusive")
+            // 开备忘时全部改用客户端工具：搜索走官方 /v1/tools/search 接口，
+            // 这样和服务端工具不冲突，助手既能联网又能自己翻备忘。
+            // 官方限制参考：other tools cannot be used together with deepseek_web_search yet
+            val clientMode = memoEnabled && settings.memoActive
             if (clientMode) {
                 val defs = com.yg.dschat.memo.ClientTools.defs(settings.webSearch)
                 for (i in 0 until defs.length()) tools.put(defs.getJSONObject(i))
@@ -428,17 +429,7 @@ class AnthropicClient {
         onError: (String) -> Unit,
         onDone: () -> Unit,
     ) {
-        val messages = buildMessages(
-            history,
-            // 只有官方模式才做客户端预检索；客户端/互斥模式下模型自己调 memo_search
-            if (settings.memoToolMode == "official") {
-                enrichedQuestion(question, memoEnabled, memoStore)
-            } else {
-                question
-            },
-            attachments,
-            settings,
-        )
+        val messages = buildMessages(history, question, attachments, settings)
         val store = memoStore
         var round = 0
 
@@ -523,18 +514,43 @@ class AnthropicClient {
                                 .put("name", c.name)
                                 .put("input", input)
                         )
-                        val out = runCatching {
+                        val official = settings.baseUrl.trimEnd('/') to settings.apiKey
+                        val res = runCatching {
                             if (web != null) {
-                                com.yg.dschat.memo.ClientTools.execute(activeStore, web, c.name, input)
+                                com.yg.dschat.memo.ClientTools.execute(activeStore, web, c.name, input, official)
                             } else {
-                                com.yg.dschat.memo.MemoTools.execute(activeStore, c.name, input)
+                                com.yg.dschat.memo.ClientTools.ToolResult(
+                                    com.yg.dschat.memo.MemoTools.execute(activeStore, c.name, input)
+                                )
                             }
-                        }.getOrElse { "工具执行失败：${it.message}" }
+                        }.getOrElse {
+                            com.yg.dschat.memo.ClientTools.ToolResult("工具执行失败：${it.message}")
+                        }
+                        // 搜索在思考区留下痕迹，和官方联网搜索的展示一致
+                        if (res.hits.isNotEmpty()) {
+                            into.withBlocks { list ->
+                                list.add(
+                                    Block.Search(
+                                        toolUseId = c.id,
+                                        results = res.hits.map {
+                                            SearchHit(
+                                                title = it.title,
+                                                url = it.url,
+                                                site = runCatching { java.net.URI(it.url).host }
+                                                    .getOrNull().orEmpty(),
+                                                snippet = it.snippet,
+                                                date = "",
+                                            )
+                                        }.toMutableList(),
+                                    )
+                                )
+                            }
+                        }
                         resultBlocks.put(
                             JSONObject()
                                 .put("type", "tool_result")
                                 .put("tool_use_id", c.id)
-                                .put("content", out)
+                                .put("content", res.text)
                         )
                     }
                     messages.put(JSONObject().put("role", "assistant").put("content", assistantBlocks))
@@ -557,21 +573,6 @@ class AnthropicClient {
         var lastPayload: String = ""
             private set
 
-
-        /** 客户端预检索：命中就把备忘内容拼进本轮问题，避免额外占用工具位 */
-        private fun enrichedQuestion(
-            question: String,
-            memoEnabled: Boolean,
-            store: com.yg.dschat.memo.NoteStore?,
-        ): String {
-            if (!memoEnabled || store == null || question.isBlank()) return question
-            val hits = runCatching { store.queryNotes(needle = question, limit = 5) }.getOrDefault(emptyList())
-            if (hits.isEmpty()) return question
-            val body = hits.joinToString("\n\n") { h ->
-                "《" + h.note.title + "》\n" + h.note.body.take(400)
-            }
-            return question + "\n\n以下是从用户备忘库中检索到的相关条目，回答时可以引用：\n\n" + body
-        }
 
         private fun isUsable(a: Msg): Boolean =            a.status in setOf("done", "stopped") &&
                 a.stopReason != "refusal" &&

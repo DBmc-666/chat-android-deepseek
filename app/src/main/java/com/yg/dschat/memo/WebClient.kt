@@ -24,13 +24,7 @@ data class FetchedDoc(
  * 只做「把网页变成文本」这一件事，页面解析全部交给 [WebParsers]（纯函数、可单测）。
  * 抓回来的正文按 url 哈希落盘，模型可以分页读，不用反复请求。
  */
-class WebClient(
-    private val cacheDir: File,
-    /** duckduckgo / searxng */
-    var provider: String = "duckduckgo",
-    /** SearXNG 实例地址，provider 为 searxng 时使用 */
-    var endpoint: String = "",
-) {
+class WebClient(private val cacheDir: File) {
 
     private val http = OkHttpClient.Builder()
         .connectTimeout(20, TimeUnit.SECONDS)
@@ -43,43 +37,49 @@ class WebClient(
 
     // ── 搜索 ───────────────────────────────────────────────────────────
 
-    fun search(query: String, count: Int): List<WebHit> {
+    /**
+     * 官方网页搜索 API（`POST /v1/tools/search`）。
+     *
+     * 和 `deepseek_web_search` 服务端工具不同，这是独立接口：客户端自己调，
+     * 因此可以和其他自定义工具同时声明。返回的 summary 是 600~800 字长摘要，适合给模型读。
+     */
+    fun searchOfficial(
+        baseUrl: String,
+        apiKey: String,
+        query: String,
+        count: Int,
+        needContent: Boolean = false,
+    ): List<WebHit> {
         val q = query.trim()
         if (q.isEmpty()) throw IOException("搜索词为空")
-        val n = count.coerceIn(1, 8)
-        return when (provider.lowercase()) {
-            "searxng" -> searxng(q, n)
-            else -> duckduckgo(q, n)
+        val base = baseUrl.trim().trimEnd('/')
+        val body = JSONObject()
+            .put("query", q.take(128))
+            .put("count", count.coerceIn(1, 20))
+            .put("need_content", needContent)
+            .toString()
+        val req = Request.Builder()
+            .url("$base/v1/tools/search")
+            .addHeader("Authorization", "Bearer $apiKey")
+            .addHeader("Content-Type", "application/json")
+            .post(body.toRequestBody("application/json; charset=utf-8".toMediaType()))
+            .build()
+        val raw = execute(req)
+        val arr = JSONObject(raw).optJSONArray("results") ?: throw IOException("搜索返回格式异常")
+        val out = ArrayList<WebHit>()
+        for (i in 0 until arr.length()) {
+            val r = arr.optJSONObject(i) ?: continue
+            out.add(
+                WebHit(
+                    title = r.optString("title"),
+                    url = r.optString("url"),
+                    // summary 比 snippet 长，更适合给模型；缺失时退回 snippet
+                    snippet = r.optString("summary").ifBlank { r.optString("snippet") },
+                )
+            )
         }
-    }
-
-    private fun duckduckgo(query: String, n: Int): List<WebHit> {
-        val url = "https://html.duckduckgo.com/html/?q=" + URLEncoder.encode(query, "UTF-8")
-        val req = Request.Builder()
-            .url(url)
-            .addHeader("User-Agent", ua)
-            .addHeader("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
-            .get()
-            .build()
-        val html = execute(req)
-        val hits = WebParsers.parseDuckDuckGo(html, n)
-        if (hits.isEmpty()) throw IOException("没有搜到结果（DuckDuckGo 可能限流，换一个搜索源试试）")
-        return hits
-    }
-
-    private fun searxng(query: String, n: Int): List<WebHit> {
-        val base = endpoint.trim().trimEnd('/')
-        if (base.isBlank()) throw IOException("先在设置里填 SearXNG 地址")
-        val url = "$base/search?format=json&q=" + URLEncoder.encode(query, "UTF-8")
-        val req = Request.Builder()
-            .url(url)
-            .addHeader("User-Agent", ua)
-            .get()
-            .build()
-        val json = execute(req)
-        val hits = WebParsers.parseSearxng(json, n)
-        if (hits.isEmpty()) throw IOException("SearXNG 没有返回结果，检查地址与 format=json 是否开启")
-        return hits
+        if (out.isEmpty()) throw IOException("没有搜到结果")
+        return out
     }
 
 

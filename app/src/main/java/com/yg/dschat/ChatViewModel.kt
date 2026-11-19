@@ -24,12 +24,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     val webClient = com.yg.dschat.memo.WebClient(app.cacheDir)
 
     fun toggleMemo() {
-        val on = !settings.memoActive
-        settings = settings.copy(
-            memoActive = on,
-            // 互斥模式：开备忘就关搜索，避免两者同时声明导致联网工具失效
-            webSearch = if (on && settings.memoToolMode == "exclusive") false else settings.webSearch,
-        )
+        settings = settings.copy(memoActive = !settings.memoActive)
         settingsStore.save(settings)
         version++
     }
@@ -45,8 +40,6 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     init {
         // 声明顺序必须在 settings 之后，否则读不到初始值
-        webClient.provider = settings.searchProvider
-        webClient.endpoint = settings.searchEndpoint
     }
 
     val sessions = mutableStateListOf<Session>()
@@ -194,12 +187,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun toggleWebSearch() {
-        val on = !settings.webSearch
-        settings = settings.copy(
-            webSearch = on,
-            // 互斥模式：开搜索就关备忘
-            memoActive = if (on && settings.memoToolMode == "exclusive") false else settings.memoActive,
-        )
+        settings = settings.copy(webSearch = !settings.webSearch)
         settingsStore.save(settings)
         version++
     }
@@ -213,8 +201,6 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     fun saveSettings(s: AppSettings) {
         settings = s
         settingsStore.save(s)
-        webClient.provider = s.searchProvider
-        webClient.endpoint = s.searchEndpoint
         version++
     }
 

@@ -118,19 +118,8 @@ data class AppSettings(
     val showUsage: Boolean = false,
     /** 注入备忘工具（本地备忘库的检索/读取/保存） */
     val memoEnabled: Boolean = false,
-    /**
-     * 备忘开启后的工具模式：
-     * - official：联网仍用 DeepSeek 官方服务端工具，备忘靠客户端预检索 + 保存按钮
-     * - client：全部改用客户端工具，助手可以自己检索/写入备忘，但联网换成外部搜索源
-     * - exclusive：备忘工具与联网搜索互斥，点一个自动关掉另一个
-     */
-    val memoToolMode: String = "official",
     /** 当前是否在用备忘（与总开关 memoEnabled 分开，否则关掉后入口就没了） */
     val memoActive: Boolean = true,
-    /** 客户端模式的搜索源：duckduckgo / searxng */
-    val searchProvider: String = "duckduckgo",
-    /** SearXNG 实例地址 */
-    val searchEndpoint: String = "",
 )
 
 // ---------- JSON ----------

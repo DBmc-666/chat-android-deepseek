@@ -60,25 +60,42 @@ object ClientTools {
         for (i in 0 until memoDefs.length()) put(memoDefs.getJSONObject(i))
     }
 
-    fun execute(store: NoteStore, web: WebClient, name: String, input: JSONObject): String = when (name) {
-        WEB_SEARCH -> search(web, input)
-        WEB_FETCH -> fetch(web, input)
-        else -> MemoTools.execute(store, name, input)
+    /** 工具执行结果：text 回传给模型，hits 用于在思考区留下痕迹 */
+    data class ToolResult(val text: String, val hits: List<WebHit> = emptyList())
+
+    fun execute(
+        store: NoteStore,
+        web: WebClient,
+        name: String,
+        input: JSONObject,
+        /** 非空时走官方搜索 API（独立接口，可与自定义工具混用） */
+        official: Pair<String, String>? = null,
+    ): ToolResult = when (name) {
+        WEB_SEARCH -> search(web, input, official)
+        WEB_FETCH -> ToolResult(fetch(web, input))
+        else -> ToolResult(MemoTools.execute(store, name, input))
     }
 
-    private fun search(web: WebClient, input: JSONObject): String {
+    private fun search(
+        web: WebClient,
+        input: JSONObject,
+        official: Pair<String, String>?,
+    ): ToolResult {
         val query = input.optString("query").trim()
-        if (query.isBlank()) return "搜索词为空"
+        if (query.isBlank()) return ToolResult("搜索词为空")
         val n = input.optInt("count", 5).coerceIn(1, 8)
-        val hits = runCatching { web.search(query, n) }.getOrElse {
-            return "搜索失败：${it.message}"
+        if (official == null) return ToolResult("搜索不可用：缺少接口地址")
+        val hits = runCatching {
+            web.searchOfficial(official.first, official.second, query, n)
+        }.getOrElse {
+            return ToolResult("搜索失败：${it.message}")
         }
-        if (hits.isEmpty()) return "没有搜到结果。"
+        if (hits.isEmpty()) return ToolResult("没有搜到结果。")
         val sb = StringBuilder("共 ${hits.size} 条：\n")
         hits.forEachIndexed { i, h ->
-            sb.append("\n${i + 1}. ${h.title}\n   ${h.url}\n   ${h.snippet.take(200)}\n")
+            sb.append("\n${i + 1}. ${h.title}\n   ${h.url}\n   ${h.snippet.take(600)}\n")
         }
-        return cap(sb.toString())
+        return ToolResult(cap(sb.toString()), hits)
     }
 
     private fun fetch(web: WebClient, input: JSONObject): String {

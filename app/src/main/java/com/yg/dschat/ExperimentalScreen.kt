@@ -51,63 +51,11 @@ fun ExperimentalScreen(vm: ChatViewModel, onBack: () -> Unit) {
     val colors = Ds.colors
     var sub by remember { mutableStateOf<String?>(null) }
     var showLastRequest by remember { mutableStateOf(false) }
-    var showModeDialog by remember { mutableStateOf(false) }
+
     val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
     val ctx = androidx.compose.ui.platform.LocalContext.current
 
     androidx.activity.compose.BackHandler { onBack() }
-
-    if (showModeDialog) {
-        androidx.compose.material3.AlertDialog(
-            onDismissRequest = { showModeDialog = false },
-            title = { Text("备忘工具模式") },
-            text = {
-                Column(Modifier.heightIn(max = 480.dp).verticalScroll(rememberScrollState())) {
-                    ModeOption(
-                        title = "官方搜索（默认）",
-                        selected = vm.settings.memoToolMode != "client",
-                        body = "联网走 DeepSeek 官方搜索，质量最好，带引用，支持深度思考搜索。\n\n" +
-                            "限制：官方不允许自定义工具与联网工具共存，所以助手**不能自己查备忘**。" +
-                            "发消息时会自动检索相关备忘并附在问题后面；想要的回答需要手动点" +
-                            "「存为备忘」保存。",
-                    ) { vm.saveSettings(vm.settings.copy(memoToolMode = "official")) }
-                    Spacer(Modifier.height(12.dp))
-                    ModeOption(
-                        title = "客户端工具",
-                        selected = vm.settings.memoToolMode == "client",
-                        body = "助手能自己调用 web_search、web_fetch、memo_search、memo_read、" +
-                            "memo_save，可以主动检索和写入备忘，无需手动点按钮。\n\n" +
-                            "限制：**不走官方搜索**，联网改用 DuckDuckGo 或自建 SearXNG 等外部源，" +
-                            "没有官方引用，结果质量明显下降；DuckDuckGo 容易限流，" +
-                            "长期使用建议配 SearXNG。",
-                    ) { vm.saveSettings(vm.settings.copy(memoToolMode = "client")) }
-                    Spacer(Modifier.height(12.dp))
-                    ModeOption(
-                        title = "互斥模式",
-                        selected = vm.settings.memoToolMode == "exclusive",
-                        body = "备忘工具与联网搜索**互斥**：在输入框打开备忘会自动关掉搜索，" +
-                            "打开搜索会自动关掉备忘。\n\n" +
-                            "适合既想助手能自己查备忘、又不想牺牲官方搜索质量的场景：" +
-                            "查资料时开搜索，整理笔记时开备忘。\n\n" +
-                            "代价：**每次都要手动切换**才能达到理想效果，忘记切换就会用错工具集" +
-                            "（开着搜索时助手查不了备忘，开着备忘时搜不到网）。",
-                    ) {
-                        // 切到互斥时立刻收敛到单一状态，否则两个 chip 会同时亮
-                        vm.saveSettings(
-                            vm.settings.copy(
-                                memoToolMode = "exclusive",
-                                memoActive = false,
-                                webSearch = true,
-                            )
-                        )
-                    }
-                }
-            },
-            confirmButton = {
-                androidx.compose.material3.TextButton(onClick = { showModeDialog = false }) { Text("关闭") }
-            },
-        )
-    }
 
     if (showLastRequest) {
         androidx.compose.material3.AlertDialog(
@@ -289,37 +237,15 @@ fun ExperimentalScreen(vm: ChatViewModel, onBack: () -> Unit) {
                         ),
                     )
                 }
+                Text(
+                    "开启后助手同时具备联网搜索与备忘能力：搜索改走官方独立接口 /v1/tools/search，" +
+                        "与备忘工具一起作为客户端工具声明，两者可以并存。",
+                    modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 12.dp),
+                    fontSize = 11.sp,
+                    lineHeight = 16.sp,
+                    color = colors.labelTertiary,
+                )
                 HorizontalDivider(color = colors.borderL1, modifier = Modifier.padding(start = 16.dp))
-                if (vm.settings.memoEnabled) {
-                    Row(
-                        Modifier
-                            .fillMaxWidth()
-                            .height(56.dp)
-                            .clickable { showModeDialog = true }
-                            .padding(horizontal = 16.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text(
-                            "备忘工具模式",
-                            modifier = Modifier.weight(1f),
-                            fontSize = 15.sp,
-                            color = colors.labelPrimary,
-                        )
-                        Text(
-                            if (vm.settings.memoToolMode == "client") "客户端工具" else "官方搜索",
-                            fontSize = 14.sp,
-                            color = colors.labelTertiary,
-                        )
-                        Spacer(Modifier.width(4.dp))
-                        Icon(
-                            Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                            null,
-                            tint = colors.labelTertiary,
-                            modifier = Modifier.size(18.dp),
-                        )
-                    }
-                    HorizontalDivider(color = colors.borderL1, modifier = Modifier.padding(start = 16.dp))
-                }
                 Row(
                     Modifier
                         .fillMaxWidth()
@@ -399,43 +325,5 @@ fun ExperimentalScreen(vm: ChatViewModel, onBack: () -> Unit) {
                 color = colors.labelTertiary,
             )
         }
-    }
-}
-
-@Composable
-private fun ModeOption(
-    title: String,
-    selected: Boolean,
-    body: String,
-    onClick: () -> Unit,
-) {
-    val colors = Ds.colors
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .background(if (selected) colors.chipActiveBg else colors.layer3)
-            .clickable { onClick() }
-            .padding(14.dp)
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                title,
-                modifier = Modifier.weight(1f),
-                fontSize = 15.sp,
-                fontWeight = androidx.compose.ui.text.font.FontWeight.Medium,
-                color = colors.labelPrimary,
-            )
-            if (selected) {
-                Icon(
-                    Icons.Default.Check,
-                    null,
-                    tint = colors.brandText,
-                    modifier = Modifier.size(18.dp),
-                )
-            }
-        }
-        Spacer(Modifier.height(6.dp))
-        Text(body, fontSize = 12.sp, lineHeight = 19.sp, color = colors.labelSecondary)
     }
 }
