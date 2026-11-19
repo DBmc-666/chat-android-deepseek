@@ -20,8 +20,8 @@ android {
         applicationId = "com.yg.dschat"
         minSdk = 26
         targetSdk = 34
-        versionCode = 11
-        versionName = "0.10.1"
+        versionCode = 12
+        versionName = "0.10.2"
     }
 
     compileOptions {
@@ -89,6 +89,8 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    // 客户端搜索模式需要解析搜索结果页
+    implementation("org.jsoup:jsoup:1.17.2")
     implementation("io.coil-kt:coil-compose:2.6.0")
     debugImplementation("androidx.compose.ui:ui-tooling")
 

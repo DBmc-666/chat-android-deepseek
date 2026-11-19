@@ -38,6 +38,14 @@ private fun needsDocParsing(mime: String, name: String): Boolean {
         listOf(".pdf", ".doc", ".docx", ".ppt", ".pptx").any { n.endsWith(it) }
 }
 
+/** 客户端工具调用（备忘），与 server_tool_use 不是一回事 */
+data class ToolUseCall(val id: String, val name: String, val inputJson: String)
+
+/** 流式期间累积的 tool_use：id/name 在 start 到齐，input 由 input_json_delta 拼出来 */
+private class PendingTool(val id: String, val name: String) {
+    val buf = StringBuilder()
+}
+
 class AnthropicClient {
 
     private val http = OkHttpClient.Builder()
@@ -93,6 +101,12 @@ class AnthropicClient {
         question: String,
         attachments: List<Attachment> = emptyList(),
         into: Msg,
+        /** 工具循环时由外层传入已构造好的 messages，跳过 buildMessages */
+        prebuiltMessages: JSONArray? = null,
+        /** 非空时收集本轮客户端工具调用 */
+        toolSink: MutableList<ToolUseCall>? = null,
+        /** 注入备忘工具声明 */
+        memoEnabled: Boolean = false,
         onUpdate: () -> Unit,
         onTitle: (String) -> Unit,
         onError: (String) -> Unit,
@@ -111,15 +125,27 @@ class AnthropicClient {
         val payload = JSONObject().apply {
             put("model", settings.model)
             put("stream", true)
-            put("messages", buildMessages(history, question, attachments, settings))
-            // 官方只认 enabled，不开思考时整段省略，别传 disabled
-            if (settings.deepThinking) put("thinking", JSONObject().put("type", "enabled"))
+            put("messages", prebuiltMessages ?: buildMessages(history, question, attachments, settings))
+            // 官方文档：思考模式默认打开、effort 默认 high。
+            // 所以关掉时必须显式传 disabled，省略等于放任默认值（仍然会思考）。
+            put(
+                "thinking",
+                JSONObject().put("type", if (settings.deepThinking) "enabled" else "disabled"),
+            )
             val tools = JSONArray()
-            if (settings.webSearch) {
-                tools.put(JSONObject().put("type", "deepseek_web_search").put("name", "deepseek_web_search"))
+            // 客户端工具模式（含互斥模式）：完全不用服务端联网工具（官方限制不能混用），联网也换成客户端实现
+            val clientMode = memoEnabled && settings.memoActive &&
+                (settings.memoToolMode == "client" || settings.memoToolMode == "exclusive")
+            if (clientMode) {
+                val defs = com.yg.dschat.memo.ClientTools.defs(settings.webSearch)
+                for (i in 0 until defs.length()) tools.put(defs.getJSONObject(i))
+            } else {
+                if (settings.webSearch) {
+                    tools.put(JSONObject().put("type", "deepseek_web_search").put("name", "deepseek_web_search"))
+                }
+                // 阅读链接总是开启：只在用户消息里出现 URL 时才会真正抓取
+                tools.put(JSONObject().put("type", "deepseek_read_url").put("name", "deepseek_read_url"))
             }
-            // 阅读链接总是开启：只在用户消息里出现 URL 时才会真正抓取
-            tools.put(JSONObject().put("type", "deepseek_read_url").put("name", "deepseek_read_url"))
             put("tools", tools)
             if (settings.safetyHigh) put("safety_check", JSONObject().put("level", "high"))
             if (settings.autoTitle) put("title", JSONObject().put("enabled", true))
@@ -170,6 +196,8 @@ class AnthropicClient {
                     val indexMap = HashMap<Int, Int>()   // 服务端块序号 -> blocks 下标
                     // server_tool_use 块不展示，但要原样留着，和结果块成对回传
                     val toolUseRaw = HashMap<String, String>()
+                    // 客户端工具（备忘）的调用，按块序号累积
+                    val pendingTools = HashMap<Int, PendingTool>()
                     var stopReason: String? = null
                     var remoteTitle: String? = null
                     var finished = false
@@ -216,7 +244,11 @@ class AnthropicClient {
                                             }
                                             into.withBlocks { list ->
                                                 indexMap[idx] = list.size
-                                                list.add(Block.Search(cb.optString("tool_use_id"), hits))
+                                                val tid = cb.optString("tool_use_id")
+                                                list.add(Block.Search(tid, hits).also {
+                                                    it.raw = cb.toString()
+                                                    it.rawToolUse = toolUseRaw[tid].orEmpty()
+                                                })
                                             }
                                         }
                                         "web_fetch_tool_result" -> {
@@ -249,13 +281,26 @@ class AnthropicClient {
                                                 toolUseRaw[it] = cb.toString()
                                             }
                                         }
+                                        "tool_use" -> {
+                                            // 客户端工具调用：记下 id/name，input 后续用 delta 拼
+                                            pendingTools[idx] = PendingTool(
+                                                id = cb.optString("id"),
+                                                name = cb.optString("name"),
+                                            )
+                                        }
                                     }
                                     onUpdate()
                                 }
 
                                 "content_block_delta" -> {
-                                    val pos = indexMap[ev.optInt("index")] ?: continue
+                                    val deltaIdx = ev.optInt("index")
                                     val d = ev.optJSONObject("delta") ?: continue
+                                    // 工具参数是碎片字符串，必须拼接
+                                    if (d.optString("type") == "input_json_delta") {
+                                        pendingTools[deltaIdx]?.buf?.append(d.optString("partial_json"))
+                                        continue
+                                    }
+                                    val pos = indexMap[deltaIdx] ?: continue
                                     into.withBlocks { list ->
                                         val block = list.getOrNull(pos) ?: return@withBlocks
                                         when (d.optString("type")) {
@@ -346,6 +391,14 @@ class AnthropicClient {
                         }
                         into.stopReason = stopReason
                         remoteTitle?.let(onTitle)
+                        // 把本轮客户端工具调用交给外层循环
+                        if (pendingTools.isNotEmpty() && toolSink != null) {
+                            pendingTools.values.forEach { pt ->
+                                toolSink.add(
+                                    ToolUseCall(pt.id, pt.name, pt.buf.toString().ifBlank { "{}" })
+                                )
+                            }
+                        }
                         onUpdate()
                         onDone()
                     } catch (e: Exception) {
@@ -357,15 +410,170 @@ class AnthropicClient {
         return call
     }
 
+    /**
+     * 带客户端工具循环的对话：模型请求备忘工具 → 本地执行 → tool_result 回传 → 继续生成，
+     * 单次回复最多 [MAX_TOOL_ROUNDS] 轮。
+     */
+    fun streamWithTools(
+        settings: AppSettings,
+        history: List<Msg>,
+        question: String,
+        attachments: List<Attachment>,
+        into: Msg,
+        memoEnabled: Boolean,
+        memoStore: com.yg.dschat.memo.NoteStore?,
+        web: com.yg.dschat.memo.WebClient? = null,
+        onUpdate: () -> Unit,
+        onTitle: (String) -> Unit,
+        onError: (String) -> Unit,
+        onDone: () -> Unit,
+    ) {
+        val messages = buildMessages(
+            history,
+            // 只有官方模式才做客户端预检索；客户端/互斥模式下模型自己调 memo_search
+            if (settings.memoToolMode == "official") {
+                enrichedQuestion(question, memoEnabled, memoStore)
+            } else {
+                question
+            },
+            attachments,
+            settings,
+        )
+        val store = memoStore
+        var round = 0
+
+        fun fire() {
+            if (round > MAX_TOOL_ROUNDS) {
+                onDone()
+                return
+            }
+            val calls = mutableListOf<ToolUseCall>()
+            // 工具轮次不清空已有内容：思考、搜索、正文按发生顺序依次累积，
+            // 和联网搜索的展示方式保持一致
+            stream(
+                settings = settings,
+                history = history,
+                question = question,
+                attachments = attachments,
+                into = into,
+                prebuiltMessages = messages,
+                toolSink = calls,
+                memoEnabled = memoEnabled,
+                onUpdate = onUpdate,
+                onTitle = onTitle,
+                onError = onError,
+                onDone = {
+                    val needRetry = into.stopReason == "tool_use" &&
+                        calls.isNotEmpty() &&
+                        memoEnabled &&
+                        store != null &&
+                        round < MAX_TOOL_ROUNDS
+                    if (!needRetry) {
+                        onDone()
+                        return@stream
+                    }
+                    // assistant 带上本轮产生的全部内容块，再跟上 tool_use。
+                    // 只传 tool_use 会丢掉本轮的搜索/浏览结果，模型下一轮就"看不见"已查到的内容。
+                    val assistantBlocks = JSONArray()
+                    val resultBlocks = JSONArray()
+                    val activeStore = store ?: return@stream
+                    into.blocks.forEach { b ->
+                        when (b) {
+                            is Block.Thinking -> {
+                                // 思考模式下继续工具调用必须回传 thinking（含 signature），
+                                // 否则服务端恢复不了推理上下文
+                                if (b.text.isNotBlank() && b.signature.isNotBlank()) {
+                                    assistantBlocks.put(
+                                        JSONObject()
+                                            .put("type", "thinking")
+                                            .put("thinking", b.text)
+                                            .put("signature", b.signature)
+                                    )
+                                }
+                            }
+                            is Block.Text -> if (b.text.isNotBlank()) {
+                                assistantBlocks.put(JSONObject().put("type", "text").put("text", b.text))
+                            }
+                            is Block.Search -> {
+                                // server_tool_use 与 web_search_tool_result 必须成对，缺一个就 400
+                                if (b.rawToolUse.isNotBlank()) {
+                                    runCatching { JSONObject(b.rawToolUse) }.getOrNull()?.let { assistantBlocks.put(it) }
+                                }
+                                if (b.raw.isNotBlank()) {
+                                    runCatching { JSONObject(b.raw) }.getOrNull()?.let { assistantBlocks.put(it) }
+                                }
+                            }
+                            is Block.Fetch -> {
+                                if (b.rawToolUse.isNotBlank()) {
+                                    runCatching { JSONObject(b.rawToolUse) }.getOrNull()?.let { assistantBlocks.put(it) }
+                                }
+                                if (b.rawResult.isNotBlank()) {
+                                    runCatching { JSONObject(b.rawResult) }.getOrNull()?.let { assistantBlocks.put(it) }
+                                }
+                            }
+                            else -> Unit
+                        }
+                    }
+                    calls.forEach { c ->
+                        val input = runCatching { JSONObject(c.inputJson) }.getOrDefault(JSONObject())
+                        assistantBlocks.put(
+                            JSONObject()
+                                .put("type", "tool_use")
+                                .put("id", c.id)
+                                .put("name", c.name)
+                                .put("input", input)
+                        )
+                        val out = runCatching {
+                            if (web != null) {
+                                com.yg.dschat.memo.ClientTools.execute(activeStore, web, c.name, input)
+                            } else {
+                                com.yg.dschat.memo.MemoTools.execute(activeStore, c.name, input)
+                            }
+                        }.getOrElse { "工具执行失败：${it.message}" }
+                        resultBlocks.put(
+                            JSONObject()
+                                .put("type", "tool_result")
+                                .put("tool_use_id", c.id)
+                                .put("content", out)
+                        )
+                    }
+                    messages.put(JSONObject().put("role", "assistant").put("content", assistantBlocks))
+                    messages.put(JSONObject().put("role", "user").put("content", resultBlocks))
+                    round++
+                    fire()
+                },
+            )
+        }
+
+        fire()
+    }
+
     companion object {
+        /** 单次回复内允许的工具轮次上限 */
+        const val MAX_TOOL_ROUNDS = 20
+
         /** 最近一次实际发出的请求体，仅用于排查问题 */
         @Volatile
         var lastPayload: String = ""
             private set
 
 
-        private fun isUsable(a: Msg): Boolean =
-            a.status in setOf("done", "stopped") &&
+        /** 客户端预检索：命中就把备忘内容拼进本轮问题，避免额外占用工具位 */
+        private fun enrichedQuestion(
+            question: String,
+            memoEnabled: Boolean,
+            store: com.yg.dschat.memo.NoteStore?,
+        ): String {
+            if (!memoEnabled || store == null || question.isBlank()) return question
+            val hits = runCatching { store.queryNotes(needle = question, limit = 5) }.getOrDefault(emptyList())
+            if (hits.isEmpty()) return question
+            val body = hits.joinToString("\n\n") { h ->
+                "《" + h.note.title + "》\n" + h.note.body.take(400)
+            }
+            return question + "\n\n以下是从用户备忘库中检索到的相关条目，回答时可以引用：\n\n" + body
+        }
+
+        private fun isUsable(a: Msg): Boolean =            a.status in setOf("done", "stopped") &&
                 a.stopReason != "refusal" &&
                 a.plainText().isNotBlank()
 

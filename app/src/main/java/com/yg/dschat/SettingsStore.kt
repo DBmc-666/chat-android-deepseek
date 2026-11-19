@@ -25,6 +25,11 @@ class SettingsStore(context: Context) {
         followSystemFont = prefs.getBoolean("followSystemFont", true),
         voiceAutoSend = prefs.getBoolean("voiceAutoSend", false),
         showUsage = prefs.getBoolean("showUsage", false),
+        memoEnabled = prefs.getBoolean("memoEnabled", false),
+        memoToolMode = prefs.getString("memoToolMode", "official") ?: "official",
+        memoActive = prefs.getBoolean("memoActive", true),
+        searchProvider = prefs.getString("searchProvider", "duckduckgo") ?: "duckduckgo",
+        searchEndpoint = prefs.getString("searchEndpoint", "") ?: "",
     )
 
     fun save(s: AppSettings) {
@@ -44,6 +49,11 @@ class SettingsStore(context: Context) {
             .putBoolean("followSystemFont", s.followSystemFont)
             .putBoolean("voiceAutoSend", s.voiceAutoSend)
             .putBoolean("showUsage", s.showUsage)
+            .putBoolean("memoEnabled", s.memoEnabled)
+            .putString("memoToolMode", s.memoToolMode)
+            .putBoolean("memoActive", s.memoActive)
+            .putString("searchProvider", s.searchProvider)
+            .putString("searchEndpoint", s.searchEndpoint)
             .apply()
     }
 }

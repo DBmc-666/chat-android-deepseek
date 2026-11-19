@@ -13,7 +13,16 @@ sealed class Block {
         var endedAt: Long = 0L,
     ) : Block()
     data class Text(var text: String = "", val citations: MutableList<Citation> = mutableListOf()) : Block()
-    data class Search(val toolUseId: String, val results: MutableList<SearchHit> = mutableListOf()) : Block()
+    data class Search(
+        val toolUseId: String,
+        val results: MutableList<SearchHit> = mutableListOf(),
+    ) : Block() {
+        /** 服务端原始 web_search_tool_result 块，工具循环回传时原样带上 */
+        var raw: String = ""
+
+        /** 配对的 server_tool_use 块：协议要求两者成对出现，缺一个就会被服务端拒绝 */
+        var rawToolUse: String = ""
+    }
     /** read_link / open_page 的抓取结果；signature 必须原样回传，否则下一轮网页正文拼不回来 */
     data class Fetch(
         val toolUseId: String,
@@ -107,6 +116,21 @@ data class AppSettings(
     val voiceAutoSend: Boolean = false,
     /** 每条回答下方显示 token 消耗 */
     val showUsage: Boolean = false,
+    /** 注入备忘工具（本地备忘库的检索/读取/保存） */
+    val memoEnabled: Boolean = false,
+    /**
+     * 备忘开启后的工具模式：
+     * - official：联网仍用 DeepSeek 官方服务端工具，备忘靠客户端预检索 + 保存按钮
+     * - client：全部改用客户端工具，助手可以自己检索/写入备忘，但联网换成外部搜索源
+     * - exclusive：备忘工具与联网搜索互斥，点一个自动关掉另一个
+     */
+    val memoToolMode: String = "official",
+    /** 当前是否在用备忘（与总开关 memoEnabled 分开，否则关掉后入口就没了） */
+    val memoActive: Boolean = true,
+    /** 客户端模式的搜索源：duckduckgo / searxng */
+    val searchProvider: String = "duckduckgo",
+    /** SearXNG 实例地址 */
+    val searchEndpoint: String = "",
 )
 
 // ---------- JSON ----------

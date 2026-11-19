@@ -17,6 +17,23 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     private val store = SessionStore(app)
     private val usageStore = UsageStore(app)
 
+    /** 备忘库（独立数据库 memo.db，与对话数据无关） */
+    val memoStore = com.yg.dschat.memo.NoteStore(app)
+
+    /** 客户端工具模式下的联网能力 */
+    val webClient = com.yg.dschat.memo.WebClient(app.cacheDir)
+
+    fun toggleMemo() {
+        val on = !settings.memoActive
+        settings = settings.copy(
+            memoActive = on,
+            // 互斥模式：开备忘就关搜索，避免两者同时声明导致联网工具失效
+            webSearch = if (on && settings.memoToolMode == "exclusive") false else settings.webSearch,
+        )
+        settingsStore.save(settings)
+        version++
+    }
+
     fun usageTotal() = usageStore.total()
     fun usageToday() = usageStore.today()
     fun resetUsage() = usageStore.reset()
@@ -25,6 +42,12 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     var settings by mutableStateOf(settingsStore.load())
         private set
+
+    init {
+        // 声明顺序必须在 settings 之后，否则读不到初始值
+        webClient.provider = settings.searchProvider
+        webClient.endpoint = settings.searchEndpoint
+    }
 
     val sessions = mutableStateListOf<Session>()
     var currentId by mutableStateOf<String?>(null)
@@ -171,7 +194,12 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun toggleWebSearch() {
-        settings = settings.copy(webSearch = !settings.webSearch)
+        val on = !settings.webSearch
+        settings = settings.copy(
+            webSearch = on,
+            // 互斥模式：开搜索就关备忘
+            memoActive = if (on && settings.memoToolMode == "exclusive") false else settings.memoActive,
+        )
         settingsStore.save(settings)
         version++
     }
@@ -185,6 +213,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     fun saveSettings(s: AppSettings) {
         settings = s
         settingsStore.save(s)
+        webClient.provider = s.searchProvider
+        webClient.endpoint = s.searchEndpoint
         version++
     }
 
@@ -242,12 +272,15 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                         "有 $failed 个附件上传失败，已跳过"
                     }
                 }
-                client.stream(
+                client.streamWithTools(
                     settings = settings,
                     history = history,
                     question = q,
                     attachments = uploaded,
                     into = assistant,
+                    memoEnabled = settings.memoEnabled,
+                    memoStore = memoStore,
+                    web = webClient,
                     onUpdate = { main.post { bump() } },
                     onTitle = { t ->
                         main.post {
@@ -361,12 +394,15 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             main.post {
                 if (myRun != runId) return@post
                 if (failed > 0) attachError = "有 $failed 个附件上传失败，已跳过"
-                client.stream(
+                client.streamWithTools(
                     settings = settings,
                     history = history,
                     question = q,
                     attachments = uploaded,
                     into = assistant,
+                    memoEnabled = settings.memoEnabled,
+                    memoStore = memoStore,
+                    web = webClient,
                     onUpdate = { main.post { bump() } },
                     onTitle = { },
                     onError = { e ->

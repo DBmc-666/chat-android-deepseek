@@ -3,6 +3,8 @@ package com.yg.dschat
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -52,6 +54,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.outlined.BookmarkAdd
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.material.icons.filled.AttachFile
@@ -212,6 +215,28 @@ fun ChatApp(vm: ChatViewModel) {
                             onOpenSearch = { searchHits = it },
                             onRetry = { vm.retryLast() },
                             onSwitchVersion = { id, delta -> vm.switchVersion(id, delta) },
+                            onSaveMemo = if (vm.settings.memoEnabled) {
+                                { text ->
+                                    Thread {
+                                        val title = text.lineSequence()
+                                            .firstOrNull { it.isNotBlank() }
+                                            ?.trim()
+                                            ?.take(30)
+                                            ?.ifBlank { "备忘" }
+                                            ?: "备忘"
+                                        runCatching { vm.memoStore.createNote(title = title, body = text) }
+                                        Handler(Looper.getMainLooper()).post {
+                                            android.widget.Toast.makeText(
+                                                ctx,
+                                                "已存为备忘：$title",
+                                                android.widget.Toast.LENGTH_SHORT,
+                                            ).show()
+                                        }
+                                    }.start()
+                                }
+                            } else {
+                                null
+                            },
                         )
                         if (!atBottom) {
                             Box(
@@ -253,8 +278,11 @@ fun ChatApp(vm: ChatViewModel) {
                     showCaveat = !isHome,
                     webSearch = vm.settings.webSearch,
                     thinking = vm.settings.deepThinking,
+                    memo = vm.settings.memoEnabled,
+                    memoActive = vm.settings.memoActive,
                     onToggleSearch = { vm.toggleWebSearch() },
                     onToggleThinking = { vm.toggleThinking() },
+                    onToggleMemo = { vm.toggleMemo() },
                     onSend = {
                         if (input.isNotBlank() || attachments.isNotEmpty()) {
                             vm.send(input, attachments)
@@ -387,6 +415,7 @@ private fun MessageList(
     onOpenSearch: (List<SearchHit>) -> Unit,
     onRetry: () -> Unit,
     onSwitchVersion: (String, Int) -> Unit,
+    onSaveMemo: ((String) -> Unit)? = null,
 ) {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
         LazyColumn(
@@ -438,6 +467,7 @@ private fun MessageList(
                             showUsage = showUsage,
                             onRetry = onRetry,
                             onSwitchVersion = onSwitchVersion,
+                            onSaveMemo = onSaveMemo?.let { save -> { save(m.plainText()) } },
                         )
                     }
                 }
@@ -610,6 +640,7 @@ private fun MessageFooter(
     showUsage: Boolean,
     onRetry: () -> Unit,
     onSwitchVersion: (String, Int) -> Unit,
+    onSaveMemo: (() -> Unit)? = null,
 ) {
     val colors = Ds.colors
     Column(Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
@@ -634,7 +665,12 @@ private fun MessageFooter(
         }
         if (m.status == "done" && m.plainText().isNotBlank()) {
             // 重新生成只在最后一条出现：中间轮次重跑会作废后面的上下文
-            MessageActions(m.plainText(), showRetry = isLast, onRetry = onRetry)
+            MessageActions(
+                m.plainText(),
+                showRetry = isLast,
+                onRetry = onRetry,
+                onSaveMemo = onSaveMemo,
+            )
         }
     }
 }
@@ -668,7 +704,12 @@ private fun VersionSwitcher(index: Int, total: Int, onDelta: (Int) -> Unit) {
 }
 
 @Composable
-private fun MessageActions(text: String, showRetry: Boolean, onRetry: () -> Unit) {
+private fun MessageActions(
+    text: String,
+    showRetry: Boolean,
+    onRetry: () -> Unit,
+    onSaveMemo: (() -> Unit)? = null,
+) {
     val ctx = LocalContext.current
     val clip = LocalClipboardManager.current
 
@@ -680,6 +721,9 @@ private fun MessageActions(text: String, showRetry: Boolean, onRetry: () -> Unit
         ActionIcon(Icons.Default.ContentCopy, "复制") {
             clip.setText(AnnotatedString(text))
             Toast.makeText(ctx, "已复制", Toast.LENGTH_SHORT).show()
+        }
+        if (onSaveMemo != null) {
+            ActionIcon(Icons.Outlined.BookmarkAdd, "存为备忘") { onSaveMemo() }
         }
         if (showRetry) {
             ActionIcon(Icons.Default.Refresh, "重新生成") { onRetry() }
@@ -915,15 +959,17 @@ private fun TextBody(b: Block.Text, onOpenSearch: (List<SearchHit>) -> Unit, str
         )
     }
     Column(Modifier.padding(bottom = 6.dp)) {
-        MarkdownView(
-            b.text,
-            streaming = streaming,
-            trailing = if (b.citations.isNotEmpty()) {
-                { CitationBadge(b.citations.size, openCitations) }
-            } else {
-                null
-            },
-        )
+        androidx.compose.foundation.text.selection.SelectionContainer {
+            MarkdownView(
+                b.text,
+                streaming = streaming,
+                trailing = if (b.citations.isNotEmpty()) {
+                    { CitationBadge(b.citations.size, openCitations) }
+                } else {
+                    null
+                },
+            )
+        }
     }
 }
 
@@ -961,8 +1007,11 @@ private fun ChatInputBar(
     showCaveat: Boolean,
     webSearch: Boolean,
     thinking: Boolean,
+    memo: Boolean,
+    memoActive: Boolean,
     onToggleSearch: () -> Unit,
     onToggleThinking: () -> Unit,
+    onToggleMemo: () -> Unit,
     onSend: () -> Unit,
     onSendText: (String) -> Unit,
     onStop: () -> Unit,
@@ -1140,10 +1189,22 @@ private fun ChatInputBar(
                 Modifier.fillMaxWidth().padding(start = 14.dp, end = 14.dp, top = 10.dp, bottom = 14.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                ToggleChip("深度思考", painterResource(R.drawable.ic_think), thinking, onToggleThinking)
-                Spacer(Modifier.width(10.dp))
-                ToggleChip("智能搜索", painterResource(R.drawable.ic_globe), webSearch, onToggleSearch)
-                Spacer(Modifier.weight(1f))
+                // chip 区占满剩余宽度并在内部横向滚动，右侧按钮宽度固定不受影响
+                Row(
+                    modifier = Modifier
+                        .weight(1f)
+                        .horizontalScroll(rememberScrollState()),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    ToggleChip("深度思考", painterResource(R.drawable.ic_think), thinking, onToggleThinking)
+                    Spacer(Modifier.width(10.dp))
+                    ToggleChip("智能搜索", painterResource(R.drawable.ic_globe), webSearch, onToggleSearch)
+                    if (memo) {
+                        Spacer(Modifier.width(10.dp))
+                        ToggleChip("备忘", painterResource(R.drawable.ic_browse), memoActive, onToggleMemo)
+                    }
+                }
+                Spacer(Modifier.width(8.dp))
 
                 if (value.isNotBlank() || streaming) {
                     SendButton(streaming, true, onSend, onStop)
@@ -1331,7 +1392,7 @@ private fun ToggleChip(
                 RoundedCornerShape(15.dp),
             )
             .clickable { onClick() }
-            .padding(horizontal = 11.dp),
+            .padding(horizontal = 9.dp),
         contentAlignment = Alignment.Center,
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1339,13 +1400,14 @@ private fun ToggleChip(
                 icon,
                 null,
                 tint = if (selected) colors.brandText else colors.labelSecondary,
-                modifier = Modifier.size(16.dp),
+                modifier = Modifier.size(15.dp),
             )
             Spacer(Modifier.width(5.dp))
             Text(
                 text,
-                fontSize = 14.sp,
-                lineHeight = 20.sp,
+                fontSize = 13.sp,
+                lineHeight = 18.sp,
+                maxLines = 1,
                 color = if (selected) colors.brandText else colors.labelPrimary,
             )
         }

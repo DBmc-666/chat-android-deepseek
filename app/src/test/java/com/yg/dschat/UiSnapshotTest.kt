@@ -154,6 +154,17 @@ class UiSnapshotTest {
         compose.onRoot().captureRoboImage("build/screenshots/chat_light.png")
     }
 
+    @Test
+    @Config(sdk = [34], qualifiers = "w411dp-h891dp-night-xxhdpi")
+    fun chat_memo_chip_dark() {
+        // 三个 chip 同时存在时不能把右侧按钮挤掉、也不能被裁切
+        val vm = newVm()
+        seedChat(vm)
+        vm.saveSettings(vm.settings.copy(memoEnabled = true))
+        compose.setContent { DsTheme { ChatApp(vm) } }
+        compose.onRoot().captureRoboImage("build/screenshots/chat_memo_chip_dark.png")
+    }
+
     // ---------------- 展开态 ----------------
 
     @Test
@@ -386,6 +397,24 @@ class UiSnapshotTest {
         )
         compose.setContent { DsTheme { ChatApp(vm) } }
         compose.onRoot().captureRoboImage("build/screenshots/user_image_dark.png")
+    }
+
+    @Test
+    @Config(sdk = [34], qualifiers = "w411dp-h891dp-night-xxhdpi")
+    fun memo_edit_dark() {
+        val ctx = androidx.test.core.app.ApplicationProvider.getApplicationContext<android.content.Context>()
+        val store = com.yg.dschat.memo.NoteStore(ctx)
+        compose.setContent {
+            DsTheme {
+                com.yg.dschat.memo.NoteEditScreen(
+                    store = store,
+                    noteId = null,
+                    onBack = {},
+                    onChanged = {},
+                )
+            }
+        }
+        compose.onRoot().captureRoboImage("build/screenshots/memo_edit_dark.png")
     }
 
     // ---------------- 设置 ----------------
