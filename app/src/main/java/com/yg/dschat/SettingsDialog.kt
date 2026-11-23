@@ -197,7 +197,7 @@ fun SettingsScreen(vm: ChatViewModel, onBack: () -> Unit) {
                     Icons.Default.Compress,
                     "自动压缩",
                     if (vm.settings.compressEnabled) {
-                        "超过 ${vm.settings.compressThreshold / 1000}k 字符"
+                        "超过 ${vm.settings.compressThreshold / 1000}k token"
                     } else {
                         "已关闭"
                     },
@@ -465,7 +465,7 @@ private fun ChoiceDialog(
 
 /**
  * 上下文压缩设置。
- * 阈值按字符估算（中文约 1 字 = 1 token，英文约 4 字符 = 1 token）。
+ * 阈值按服务端返回的真实 input token 判断。
  */
 @Composable
 private fun CompressDialog(vm: ChatViewModel, onDismiss: () -> Unit) {
@@ -498,7 +498,7 @@ private fun CompressDialog(vm: ChatViewModel, onDismiss: () -> Unit) {
                 }
                 Spacer(Modifier.height(12.dp))
                 Text(
-                    "阈值：${threshold / 1000}k 字符（约 ${threshold / 1000}k token）",
+                    "阈值：${threshold / 1000}k input token",
                     fontSize = 13.sp,
                     color = colors.labelSecondary,
                 )

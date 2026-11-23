@@ -625,7 +625,7 @@ class AnthropicClient {
             var lastReminder: String? = null
 
             // 先收集合法的 user/assistant 对
-            val pairs = ArrayList<Pair<Msg, Msg>>()
+            var pairs = ArrayList<Pair<Msg, Msg>>()
             var i = 0
             while (i + 1 < history.size) {
                 val u = history[i]
@@ -638,26 +638,16 @@ class AnthropicClient {
                 }
             }
 
-            // 预算：从最新往回装，装不下的旧回答先截断，再不行就整轮省略
-            val budget = if (s.compressEnabled) s.compressThreshold else Int.MAX_VALUE
-            val picked = ArrayList<Triple<Msg, Msg, String>>()   // user, assistant 原对象, 实际发出的文本
-            var used = question.length
+            // 压缩依据是服务端返回的真实 input_tokens（存在最近一条回答上），不做字符估算。
+            // 做法是整轮丢弃最早的对话，不截断任何一条回答的内容。
             var dropped = 0
-            for (k in pairs.indices.reversed()) {
-                val (u, a) = pairs[k]
-                val uLen = u.plainText().length
-                val aText = a.plainText()
-                if (used + uLen + aText.length <= budget) {
-                    picked.add(0, Triple(u, a, aText))
-                    used += uLen + aText.length
-                } else {
-                    val short = if (aText.length > 120) aText.take(120) + "…" else aText
-                    if (used + uLen + short.length <= budget) {
-                        picked.add(0, Triple(u, a, short))
-                        used += uLen + short.length
-                    } else {
-                        dropped = k + 1
-                        break
+            if (s.compressEnabled && s.compressThreshold > 0) {
+                val lastInput = pairs.lastOrNull()?.second?.usage?.input ?: 0
+                if (lastInput > s.compressThreshold && pairs.size > 2) {
+                    val keep = maxOf(2, (pairs.size * (s.compressThreshold.toDouble() / lastInput)).toInt())
+                    if (keep < pairs.size) {
+                        dropped = pairs.size - keep
+                        pairs = ArrayList(pairs.takeLast(keep))
                     }
                 }
             }
@@ -670,15 +660,13 @@ class AnthropicClient {
                 out.put(JSONObject().put("role", "assistant").put("content", "好的。"))
             }
 
-            for ((u, a, aText) in picked) {
+            for ((u, a) in pairs) {
                 if (reminder != null && reminder != lastReminder) {
                     out.put(JSONObject().put("role", "latest_reminder").put("content", reminder))
                     lastReminder = reminder
                 }
                 out.put(JSONObject().put("role", "user").put("content", userContent(u.plainText(), u.attachments)))
-                // 被截断的旧回答不再带工具块（那些块很占预算，且早已无用）
-                val body: Any = if (aText.length == a.plainText().length) assistantContent(a) else aText
-                out.put(JSONObject().put("role", "assistant").put("content", body))
+                out.put(JSONObject().put("role", "assistant").put("content", assistantContent(a)))
             }
 
             if (reminder != null && reminder != lastReminder) {
@@ -691,6 +679,10 @@ class AnthropicClient {
         /** 估算一段历史要占多少字符（中文约 1 字 ≈ 1 token） */
         fun estimateChars(history: List<Msg>): Int =
             history.sumOf { it.plainText().length + 40 }
+
+        /** 最近一次真实 input_tokens，用于判断上下文是否已经过长 */
+        fun lastInputTokens(history: List<Msg>): Int =
+            history.lastOrNull { it.role == "assistant" }?.usage?.input ?: 0
 
         /** 有 read_link 抓取块时，assistant content 必须用块数组并把 signature 原样带回。 */
         private fun assistantContent(a: Msg): Any {
