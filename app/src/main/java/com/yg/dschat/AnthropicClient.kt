@@ -517,7 +517,14 @@ class AnthropicClient {
                         val official = settings.baseUrl.trimEnd('/') to settings.apiKey
                         val res = runCatching {
                             if (web != null) {
-                                com.yg.dschat.memo.ClientTools.execute(activeStore, web, c.name, input, official)
+                                com.yg.dschat.memo.ClientTools.execute(
+                                    activeStore,
+                                    web,
+                                    c.name,
+                                    input,
+                                    official,
+                                    history,
+                                )
                             } else {
                                 com.yg.dschat.memo.ClientTools.ToolResult(
                                     com.yg.dschat.memo.MemoTools.execute(activeStore, c.name, input)

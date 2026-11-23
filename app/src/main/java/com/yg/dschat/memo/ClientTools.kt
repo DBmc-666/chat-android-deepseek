@@ -14,6 +14,7 @@ object ClientTools {
 
     const val WEB_SEARCH = "web_search"
     const val WEB_FETCH = "web_fetch"
+    const val HISTORY_SEARCH = "history_search"
 
     private const val MAX_RESULT_CHARS = 6000
 
@@ -56,6 +57,28 @@ object ClientTools {
                     )
             )
         }
+        put(
+            JSONObject()
+                .put("name", HISTORY_SEARCH)
+                .put(
+                    "description",
+                    "在本会话更早的对话里按关键词查找。上下文过长时前面几轮会被省略（界面仍完整显示），" +
+                        "如果你觉得答案可能依赖更早的内容，用这个工具把它们找回来。"
+                )
+                .put(
+                    "input_schema",
+                    JSONObject()
+                        .put("type", "object")
+                        .put(
+                            "properties",
+                            JSONObject().put(
+                                "query",
+                                JSONObject().put("type", "string").put("description", "关键词")
+                            )
+                        )
+                        .put("required", JSONArray().put("query"))
+                )
+        )
         val memoDefs = MemoTools.defs()
         for (i in 0 until memoDefs.length()) put(memoDefs.getJSONObject(i))
     }
@@ -70,10 +93,34 @@ object ClientTools {
         input: JSONObject,
         /** 非空时走官方搜索 API（独立接口，可与自定义工具混用） */
         official: Pair<String, String>? = null,
+        /** 完整会话历史，供 history_search 在被省略的对话里翻找 */
+        history: List<com.yg.dschat.Msg> = emptyList(),
     ): ToolResult = when (name) {
         WEB_SEARCH -> search(web, input, official)
         WEB_FETCH -> ToolResult(fetch(web, input))
+        HISTORY_SEARCH -> ToolResult(searchHistory(history, input))
         else -> ToolResult(MemoTools.execute(store, name, input))
+    }
+
+    /** 在被压缩掉的早期对话里按关键词抓片段，界面上的记录本身一直是完整的 */
+    private fun searchHistory(history: List<com.yg.dschat.Msg>, input: JSONObject): String {
+        val q = input.optString("query").trim()
+        if (q.isBlank()) return "关键词为空"
+        val hits = history.filter { it.plainText().contains(q, ignoreCase = true) }
+        if (hits.isEmpty()) return "更早的对话里没有出现「$q」。"
+        val sb = StringBuilder("在更早的对话里找到 ${hits.size} 处提到「$q」：\n")
+        hits.takeLast(10).forEach { m ->
+            val t = m.plainText()
+            val at = t.indexOf(q, ignoreCase = true).coerceAtLeast(0)
+            val from = (at - 120).coerceAtLeast(0)
+            val to = (at + q.length + 240).coerceAtMost(t.length)
+            sb.append("\n[").append(if (m.role == "user") "用户" else "助手").append("] ")
+            if (from > 0) sb.append("…")
+            sb.append(t.substring(from, to))
+            if (to < t.length) sb.append("…")
+            sb.append("\n")
+        }
+        return cap(sb.toString())
     }
 
     private fun search(
