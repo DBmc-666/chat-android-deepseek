@@ -27,6 +27,8 @@ class SettingsStore(context: Context) {
         showUsage = prefs.getBoolean("showUsage", false),
         memoEnabled = prefs.getBoolean("memoEnabled", false),
         memoActive = prefs.getBoolean("memoActive", true),
+        compressEnabled = prefs.getBoolean("compressEnabled", true),
+        compressThreshold = prefs.getInt("compressThreshold", 300_000),
     )
 
     fun save(s: AppSettings) {
@@ -48,6 +50,8 @@ class SettingsStore(context: Context) {
             .putBoolean("showUsage", s.showUsage)
             .putBoolean("memoEnabled", s.memoEnabled)
             .putBoolean("memoActive", s.memoActive)
+            .putBoolean("compressEnabled", s.compressEnabled)
+            .putInt("compressThreshold", s.compressThreshold)
             .apply()
     }
 }

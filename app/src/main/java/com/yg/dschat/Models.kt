@@ -120,6 +120,10 @@ data class AppSettings(
     val memoEnabled: Boolean = false,
     /** 当前是否在用备忘（与总开关 memoEnabled 分开，否则关掉后入口就没了） */
     val memoActive: Boolean = true,
+    /** 上下文超过阈值时自动压缩（截断陈旧回答、丢弃更早轮次） */
+    val compressEnabled: Boolean = true,
+    /** 压缩阈值，按字符估算（中文约 1 字 = 1 token，英文约 4 字符 = 1 token） */
+    val compressThreshold: Int = 300_000,
 )
 
 // ---------- JSON ----------

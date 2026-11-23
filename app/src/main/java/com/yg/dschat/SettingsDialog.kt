@@ -19,6 +19,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.Compress
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.Info
@@ -39,7 +40,11 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Slider
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.Slider
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
@@ -186,6 +191,19 @@ fun SettingsScreen(vm: ChatViewModel, onBack: () -> Unit) {
                 }
             }
 
+            SectionLabel("上下文")
+            SettingsCard {
+                SettingRow(
+                    Icons.Default.Compress,
+                    "自动压缩",
+                    if (vm.settings.compressEnabled) {
+                        "超过 ${vm.settings.compressThreshold / 1000}k 字符"
+                    } else {
+                        "已关闭"
+                    },
+                ) { dialog = "compress" }
+            }
+
             SectionLabel("数据")
             SettingsCard {
                 SettingRow(
@@ -289,6 +307,7 @@ fun SettingsScreen(vm: ChatViewModel, onBack: () -> Unit) {
                 dialog = null
             },
         )
+        "compress" -> CompressDialog(vm) { dialog = null }
         "clear" -> AlertDialog(
             onDismissRequest = { dialog = null },
             title = { Text("删除所有对话") },
@@ -441,5 +460,71 @@ private fun ChoiceDialog(
             }
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+    )
+}
+
+/**
+ * 上下文压缩设置。
+ * 阈值按字符估算（中文约 1 字 = 1 token，英文约 4 字符 = 1 token）。
+ */
+@Composable
+private fun CompressDialog(vm: ChatViewModel, onDismiss: () -> Unit) {
+    val colors = Ds.colors
+    var enabled by remember { mutableStateOf(vm.settings.compressEnabled) }
+    var threshold by remember { mutableStateOf(vm.settings.compressThreshold) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("上下文压缩") },
+        text = {
+            Column {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "超过阈值自动压缩",
+                        modifier = Modifier.weight(1f),
+                        fontSize = 14.sp,
+                        color = colors.labelPrimary,
+                    )
+                    Switch(
+                        checked = enabled,
+                        onCheckedChange = { enabled = it },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = colors.bg,
+                            checkedTrackColor = colors.labelPrimary,
+                            uncheckedThumbColor = colors.labelSecondary,
+                            uncheckedTrackColor = colors.layer3,
+                        ),
+                    )
+                }
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    "阈值：${threshold / 1000}k 字符（约 ${threshold / 1000}k token）",
+                    fontSize = 13.sp,
+                    color = colors.labelSecondary,
+                )
+                Slider(
+                    value = threshold.toFloat(),
+                    onValueChange = { threshold = (it / 10_000).toInt() * 10_000 },
+                    valueRange = 50_000f..1_000_000f,
+                    enabled = enabled,
+                )
+                Text(
+                    "超过阈值后，最早的回答会被截断成 120 字，仍超出就整轮省略，并在开头注明省略了几轮。" +
+                        "只影响发给模型的内容，本地记录不受影响。",
+                    fontSize = 11.sp,
+                    lineHeight = 16.sp,
+                    color = colors.labelTertiary,
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                vm.saveSettings(
+                    vm.settings.copy(compressEnabled = enabled, compressThreshold = threshold)
+                )
+                onDismiss()
+            }) { Text("保存") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
     )
 }

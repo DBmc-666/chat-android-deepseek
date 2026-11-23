@@ -199,4 +199,50 @@ class BuildMessagesTest {
         assertEquals(5, out.length())
         assertNotEquals(0, out.length())
     }
+    // ---------------- 上下文压缩 ----------------
+
+    /** 造一段很长的历史：每轮回答 300 字，共 n 轮 */
+    private fun longHistory(n: Int): List<Msg> = (0 until n).flatMap { i ->
+        listOf(user("问题 $i"), assistant("答".repeat(300)))
+    }
+
+    @Test
+    fun under_threshold_keeps_all_turns() {
+        val s = AppSettings(apiKey = "sk-test", reminderOn = false, compressThreshold = 300_000)
+        val out = AnthropicClient.buildMessages(longHistory(3), "继续", emptyList(), s)
+        // 3 轮 + 当前提问 = 7 条，没有省略提示
+        assertEquals(7, out.length())
+        assertTrue(!out.toString().contains("已省略"))
+    }
+
+    @Test
+    fun over_threshold_drops_oldest_and_notes_it() {
+        // 阈值压到只够两三轮
+        val s = AppSettings(apiKey = "sk-test", reminderOn = false, compressThreshold = 900)
+        val out = AnthropicClient.buildMessages(longHistory(10), "继续", emptyList(), s)
+        val text = out.toString()
+        assertTrue("应该注明省略了几轮", text.contains("已省略"))
+        // 省略提示占两条 + 当前提问一条
+        assertTrue("应保留部分历史", out.length() > 3)
+        assertTrue("不能把所有轮次都发出去", out.length() < 21)
+    }
+
+    @Test
+    fun disabled_compression_ignores_threshold() {
+        val s = AppSettings(
+            apiKey = "sk-test",
+            reminderOn = false,
+            compressEnabled = false,
+            compressThreshold = 100,
+        )
+        val out = AnthropicClient.buildMessages(longHistory(5), "继续", emptyList(), s)
+        assertEquals(11, out.length())
+        assertTrue(!out.toString().contains("已省略"))
+    }
+
+    @Test
+    fun estimate_chars_counts_text() {
+        val n = AnthropicClient.estimateChars(listOf(user("一二三四五"), assistant("六七八九十")))
+        assertTrue(n >= 10)
+    }
 }
